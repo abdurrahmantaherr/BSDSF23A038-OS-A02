@@ -57,3 +57,33 @@ If the terminal is resized, the layout automatically adapts to fit the new width
 - **Tag:** `v1.2.0`
 - **Release Title:** `Version 1.2.0 – Column Display (Down Then Across)`
 >>>>>>> 8266cb1 (docs: added Feature 3 answers to REPORT.md)
+
+## Feature 4: `ls -x` Horizontal Display
+
+### Version
+v1.3.0
+
+### Description
+Added support for the `-x` option to display filenames **across then down**, like the real `ls -x`.  
+This uses the same column logic but changes the index formula to print horizontally first.
+
+---
+
+### Q1. Difference between “down then across” and “across then down”
+- **Down then across (default):** Fills one column top-to-bottom, then moves to the next.
+- **Across then down (-x):** Fills rows left-to-right first, then continues on the next row.
+
+---
+
+### Q2. How is “across then down” implemented?
+The indexing logic is changed from:
+to:
+This reorders filenames horizontally before moving to the next line.
+
+---
+
+### Commit and Tag
+- **Commit message:** `feat: implement ls -x for horizontal (across-then-down) display`
+- **Tag:** `v1.3.0`
+- **Release:** `Version 1.3.0 – ls -x (Horizontal Display)`
+
