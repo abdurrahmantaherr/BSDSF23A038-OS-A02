@@ -86,4 +86,18 @@ This reorders filenames horizontally before moving to the next line.
 - **Commit message:** `feat: implement ls -x for horizontal (across-then-down) display`
 - **Tag:** `v1.3.0`
 - **Release:** `Version 1.3.0 – ls -x (Horizontal Display)`
+### **Feature 5 – Alphabetical Sorting (v1.4.0)**
+**Objective:**  
+Ensure all files are displayed in alphabetical order for all modes (`default`, `-x`, and `-l`).
+
+**Implementation:**  
+- Used the standard C function `qsort()` for sorting strings.  
+- Added comparator `cmpstr()` for lexicographic comparison.  
+- Sorting applied to all modes before display.  
+
+**Example Output:**
+
+**Version Tag:** `v1.4.0`  
+**Branch:** `feature-sort-v1.4.0`  
+**Release Name:** *Version 1.4.0 – Alphabetical Sorting*
 
