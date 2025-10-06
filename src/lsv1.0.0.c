@@ -13,14 +13,16 @@
 #include <errno.h>
 #include <getopt.h>
 #include <limits.h>
+#include <sys/ioctl.h>
+#include <termios.h>
 
 struct fileinfo {
     char *name;
     struct stat st;
 };
 
+// ------------------- PERMISSION STRING --------------------
 static void mode_to_perm(mode_t m, char *buf) {
-    // file type
     if (S_ISDIR(m)) buf[0] = 'd';
     else if (S_ISLNK(m)) buf[0] = 'l';
     else if (S_ISCHR(m)) buf[0] = 'c';
@@ -29,22 +31,16 @@ static void mode_to_perm(mode_t m, char *buf) {
     else if (S_ISSOCK(m)) buf[0] = 's';
     else buf[0] = '-';
 
-    // user
     buf[1] = (m & S_IRUSR) ? 'r' : '-';
     buf[2] = (m & S_IWUSR) ? 'w' : '-';
     buf[3] = (m & S_IXUSR) ? 'x' : '-';
-
-    // group
     buf[4] = (m & S_IRGRP) ? 'r' : '-';
     buf[5] = (m & S_IWGRP) ? 'w' : '-';
     buf[6] = (m & S_IXGRP) ? 'x' : '-';
-
-    // others
     buf[7] = (m & S_IROTH) ? 'r' : '-';
     buf[8] = (m & S_IWOTH) ? 'w' : '-';
     buf[9] = (m & S_IXOTH) ? 'x' : '-';
 
-    // special bits: setuid, setgid, sticky
     if (m & S_ISUID) buf[3] = (buf[3] == 'x') ? 's' : 'S';
     if (m & S_ISGID) buf[6] = (buf[6] == 'x') ? 's' : 'S';
     if (m & S_ISVTX) buf[9] = (buf[9] == 'x') ? 't' : 'T';
@@ -52,29 +48,19 @@ static void mode_to_perm(mode_t m, char *buf) {
     buf[10] = '\0';
 }
 
+// ------------------- TIME FORMAT --------------------
 static void format_time(time_t mtime, char *buf, size_t buflen) {
     time_t now = time(NULL);
     struct tm tm;
     localtime_r(&mtime, &tm);
 
-    // if older than ~6 months (approx 15552000 seconds) or in future, show year
-    if (llabs((long long)(now - mtime)) > 15552000LL) {
-        // "%b %e  %Y" (two spaces before year to visually line up like ls)
+    if (llabs((long long)(now - mtime)) > 15552000LL)
         strftime(buf, buflen, "%b %e  %Y", &tm);
-    } else {
+    else
         strftime(buf, buflen, "%b %e %H:%M", &tm);
-    }
 }
 
-static int num_digits_longlong(long long x) {
-    if (x == 0) return 1;
-    int d = 0;
-    if (x < 0) { x = -x; d++; }
-    while (x) { x /= 10; d++; }
-    return d;
-}
-
-// long listing implementation for one directory path
+// ------------------- LONG LISTING MODE --------------------
 static void long_listing(const char *path) {
     DIR *d = opendir(path);
     if (!d) {
@@ -88,7 +74,6 @@ static void long_listing(const char *path) {
     char full[PATH_MAX];
 
     while ((de = readdir(d)) != NULL) {
-        // skip hidden files (same as default ls), unless you want -a behavior
         if (de->d_name[0] == '.') continue;
 
         if (n + 1 > cap) {
@@ -98,58 +83,48 @@ static void long_listing(const char *path) {
         }
 
         arr[n].name = strdup(de->d_name);
-        if (!arr[n].name) { perror("strdup"); closedir(d); return; }
-
         snprintf(full, sizeof full, "%s/%s", path, de->d_name);
-        if (lstat(full, &arr[n].st) == -1) {
-            // if lstat fails, still store zeroed stat to avoid crash
-            perror(full);
+        if (lstat(full, &arr[n].st) == -1)
             memset(&arr[n].st, 0, sizeof arr[n].st);
-        }
         n++;
     }
     closedir(d);
 
-    // compute column widths
     int max_links = 0, max_owner = 0, max_group = 0, max_size = 0;
     for (size_t i = 0; i < n; ++i) {
-        unsigned long links = (unsigned long)arr[i].st.st_nlink;
-        int d_links = snprintf(NULL, 0, "%lu", links);
-        if (d_links > max_links) max_links = d_links;
+        char tmp[64];
+        int len;
+
+        len = snprintf(tmp, sizeof tmp, "%lu", (unsigned long)arr[i].st.st_nlink);
+        if (len > max_links) max_links = len;
 
         struct passwd *pw = getpwuid(arr[i].st.st_uid);
-        int len_owner = pw ? (int)strlen(pw->pw_name) : snprintf(NULL, 0, "%u", (unsigned)arr[i].st.st_uid);
-        if (len_owner > max_owner) max_owner = len_owner;
+        len = pw ? strlen(pw->pw_name) : snprintf(tmp, sizeof tmp, "%u", arr[i].st.st_uid);
+        if (len > max_owner) max_owner = len;
 
         struct group *gr = getgrgid(arr[i].st.st_gid);
-        int len_group = gr ? (int)strlen(gr->gr_name) : snprintf(NULL, 0, "%u", (unsigned)arr[i].st.st_gid);
-        if (len_group > max_group) max_group = len_group;
+        len = gr ? strlen(gr->gr_name) : snprintf(tmp, sizeof tmp, "%u", arr[i].st.st_gid);
+        if (len > max_group) max_group = len;
 
-        int d_size = num_digits_longlong((long long)arr[i].st.st_size);
-        if (d_size > max_size) max_size = d_size;
+        len = snprintf(tmp, sizeof tmp, "%lld", (long long)arr[i].st.st_size);
+        if (len > max_size) max_size = len;
     }
 
-    // print entries
     char perm[11], timestr[64], ownerbuf[32], groupbuf[32];
     for (size_t i = 0; i < n; ++i) {
         mode_to_perm(arr[i].st.st_mode, perm);
 
-        unsigned long links = (unsigned long)arr[i].st.st_nlink;
         struct passwd *pw = getpwuid(arr[i].st.st_uid);
-        const char *owner = NULL;
-        if (pw) owner = pw->pw_name;
-        else { snprintf(ownerbuf, sizeof ownerbuf, "%u", (unsigned)arr[i].st.st_uid); owner = ownerbuf; }
+        const char *owner = pw ? pw->pw_name : (snprintf(ownerbuf, sizeof ownerbuf, "%u", arr[i].st.st_uid), ownerbuf);
 
         struct group *gr = getgrgid(arr[i].st.st_gid);
-        const char *group = NULL;
-        if (gr) group = gr->gr_name;
-        else { snprintf(groupbuf, sizeof groupbuf, "%u", (unsigned)arr[i].st.st_gid); group = groupbuf; }
+        const char *group = gr ? gr->gr_name : (snprintf(groupbuf, sizeof groupbuf, "%u", arr[i].st.st_gid), groupbuf);
 
         format_time(arr[i].st.st_mtime, timestr, sizeof timestr);
 
         printf("%s %*lu %-*s %-*s %*lld %s %s\n",
                perm,
-               max_links, links,
+               max_links, (unsigned long)arr[i].st.st_nlink,
                max_owner, owner,
                max_group, group,
                max_size, (long long)arr[i].st.st_size,
@@ -157,23 +132,67 @@ static void long_listing(const char *path) {
                arr[i].name);
     }
 
-    // cleanup
-    for (size_t i = 0; i < n; ++i) free(arr[i].name);
+    for (size_t i = 0; i < n; ++i)
+        free(arr[i].name);
     free(arr);
 }
 
-// simple (default) list: print filenames separated by newline
+// ------------------- COLUMN DISPLAY MODE (DOWN THEN ACROSS) --------------------
 static void simple_list(const char *path) {
     DIR *d = opendir(path);
-    if (!d) { fprintf(stderr, "opendir(%s): %s\n", path, strerror(errno)); return; }
+    if (!d) {
+        perror("opendir");
+        return;
+    }
+
     struct dirent *de;
+    char **names = NULL;
+    int count = 0, capacity = 0;
+    size_t maxlen = 0;
+
+    // Step 1: Read all filenames and find longest name
     while ((de = readdir(d)) != NULL) {
         if (de->d_name[0] == '.') continue;
-        printf("%s\n", de->d_name);
+        if (count == capacity) {
+            capacity = capacity ? capacity * 2 : 64;
+            names = realloc(names, capacity * sizeof(char *));
+        }
+        names[count] = strdup(de->d_name);
+        size_t len = strlen(de->d_name);
+        if (len > maxlen) maxlen = len;
+        count++;
     }
     closedir(d);
+    if (count == 0) return;
+
+    // Step 2: Get terminal width
+    struct winsize ws;
+    int term_width = 80;
+    if (ioctl(STDOUT_FILENO, TIOCGWINSZ, &ws) == 0)
+        term_width = ws.ws_col;
+
+    int spacing = 2;
+    int col_width = (int)maxlen + spacing;
+    int cols = term_width / col_width;
+    if (cols < 1) cols = 1;
+    int rows = (count + cols - 1) / cols;
+
+    // Step 3: Print down then across
+    for (int r = 0; r < rows; r++) {
+        for (int c = 0; c < cols; c++) {
+            int idx = c * rows + r;
+            if (idx < count)
+                printf("%-*s", col_width, names[idx]);
+        }
+        printf("\n");
+    }
+
+    for (int i = 0; i < count; i++)
+        free(names[i]);
+    free(names);
 }
 
+// ------------------- MAIN --------------------
 int main(int argc, char **argv) {
     int opt;
     int long_listing_flag = 0;
