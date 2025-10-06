@@ -101,3 +101,20 @@ Ensure all files are displayed in alphabetical order for all modes (`default`, `
 **Branch:** `feature-sort-v1.4.0`  
 **Release Name:** *Version 1.4.0 – Alphabetical Sorting*
 
+---
+
+## 🧩 Feature 6 – Show Hidden Files (`-a`)
+
+### 🎯 Objective
+Enhance the `ls` implementation to display *hidden files* (those whose names begin with a dot `.`) when the `-a` option is provided.  
+By default, hidden files remain excluded—matching the standard behaviour of GNU `ls`.
+
+---
+
+### ⚙️ Implementation Details
+1. **Added a new command-line flag** `-a` in `main()` using `getopt(argc, argv, "lxa")`.
+2. Introduced a global boolean `show_all` variable.  
+3. Updated all directory-reading loops (`simple_list_vertical`, `simple_list_horizontal`, and `long_listing`) so that  
+   ```c
+   if (!show_all && de->d_name[0] == '.') continue;
+
