@@ -143,4 +143,38 @@ Enable the `ls` command to traverse subdirectories recursively when `-R` is spec
 **Commit Message:** `feat: added -R option for recursive directory listing`
 
 ---
+---
+
+## 🏁 Final Verification and Conclusion
+
+All seven features have been implemented, tested, and verified:
+- Each version is tagged and released on GitHub (`v1.0.0` → `v1.6.0`).
+- The final program supports combinations of `-l`, `-x`, `-a`, and `-R`.
+- Output format matches the behavior of the GNU `ls` command.
+
+### 📦 Final Build
+The `make` command successfully compiles the project, producing:
+
+### ✅ Testing Summary
+| Command | Description |
+|----------|--------------|
+| `./bin/ls` | Simple listing |
+| `./bin/ls -l` | Long format |
+| `./bin/ls -a` | Show hidden files |
+| `./bin/ls -x` | Horizontal layout |
+| `./bin/ls -R` | Recursive listing |
+| `./bin/ls -laR` | Combined options |
+
+### 🔖 Version
+**Final Version:** `v1.6.0`
+
+### 🧠 Learning Outcome
+This project provided practical experience with:
+- Directory handling using `<dirent.h>`
+- File permissions and metadata (`stat`)
+- Command-line parsing using `getopt`
+- Dynamic memory and sorting (`qsort`)
+- Recursive traversal and terminal layout control
+
+---
 
