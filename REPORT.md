@@ -117,4 +117,30 @@ By default, hidden files remain excluded—matching the standard behaviour of GN
 3. Updated all directory-reading loops (`simple_list_vertical`, `simple_list_horizontal`, and `long_listing`) so that  
    ```c
    if (!show_all && de->d_name[0] == '.') continue;
+---
+
+## 🧩 Feature 7 – Recursive Listing (`-R`)
+
+### 🎯 Objective
+Enable the `ls` command to traverse subdirectories recursively when `-R` is specified.
+
+### ⚙️ Implementation
+- Added a new flag `-R` in the command-line parser.
+- Implemented a new helper function `list_recursive()` that:
+  - Prints the current directory.
+  - Lists its contents using existing display modes.
+  - Recursively calls itself for subdirectories (excluding `.` and `..`).
+
+### 🧪 Testing
+| Command | Expected Result |
+|----------|----------------|
+| `./bin/ls -R` | Lists current dir and all subdirs |
+| `./bin/ls -lR` | Long listing recursively |
+| `./bin/ls -aR` | Includes hidden files recursively |
+
+### 🏷️ Version
+**Tag:** `v1.6.0`  
+**Commit Message:** `feat: added -R option for recursive directory listing`
+
+---
 

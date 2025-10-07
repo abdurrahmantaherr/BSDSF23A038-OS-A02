@@ -21,6 +21,8 @@ struct fileinfo {
     struct stat st;
 };
 
+static int show_all_flag = 0;
+
 // ------------------- PERMISSION STRING --------------------
 static void mode_to_perm(mode_t m, char *buf) {
     if (S_ISDIR(m)) buf[0] = 'd';
@@ -44,7 +46,6 @@ static void mode_to_perm(mode_t m, char *buf) {
     if (m & S_ISUID) buf[3] = (buf[3] == 'x') ? 's' : 'S';
     if (m & S_ISGID) buf[6] = (buf[6] == 'x') ? 's' : 'S';
     if (m & S_ISVTX) buf[9] = (buf[9] == 'x') ? 't' : 'T';
-
     buf[10] = '\0';
 }
 
@@ -60,7 +61,7 @@ static void format_time(time_t mtime, char *buf, size_t buflen) {
         strftime(buf, buflen, "%b %e %H:%M", &tm);
 }
 
-// ------------------- LONG LISTING MODE --------------------
+// ------------------- LONG LISTING --------------------
 static void long_listing(const char *path) {
     DIR *d = opendir(path);
     if (!d) {
@@ -74,88 +75,60 @@ static void long_listing(const char *path) {
     char full[PATH_MAX];
 
     while ((de = readdir(d)) != NULL) {
-        if (de->d_name[0] == '.') continue;
-
+        if (!show_all_flag && de->d_name[0] == '.') continue;
         if (n + 1 > cap) {
             cap = cap ? cap * 2 : 64;
             arr = realloc(arr, cap * sizeof *arr);
-            if (!arr) { perror("realloc"); closedir(d); return; }
         }
-
         arr[n].name = strdup(de->d_name);
         snprintf(full, sizeof full, "%s/%s", path, de->d_name);
-        if (lstat(full, &arr[n].st) == -1)
-            memset(&arr[n].st, 0, sizeof arr[n].st);
+        lstat(full, &arr[n].st);
         n++;
     }
     closedir(d);
 
-    int max_links = 0, max_owner = 0, max_group = 0, max_size = 0;
-    for (size_t i = 0; i < n; ++i) {
-        char tmp[64];
-        int len;
-
-        len = snprintf(tmp, sizeof tmp, "%lu", (unsigned long)arr[i].st.st_nlink);
-        if (len > max_links) max_links = len;
-
-        struct passwd *pw = getpwuid(arr[i].st.st_uid);
-        len = pw ? strlen(pw->pw_name) : snprintf(tmp, sizeof tmp, "%u", arr[i].st.st_uid);
-        if (len > max_owner) max_owner = len;
-
-        struct group *gr = getgrgid(arr[i].st.st_gid);
-        len = gr ? strlen(gr->gr_name) : snprintf(tmp, sizeof tmp, "%u", arr[i].st.st_gid);
-        if (len > max_group) max_group = len;
-
-        len = snprintf(tmp, sizeof tmp, "%lld", (long long)arr[i].st.st_size);
-        if (len > max_size) max_size = len;
-    }
+    qsort(arr, n, sizeof *arr, (int (*)(const void *, const void *)) strcmp);
 
     char perm[11], timestr[64], ownerbuf[32], groupbuf[32];
     for (size_t i = 0; i < n; ++i) {
         mode_to_perm(arr[i].st.st_mode, perm);
 
         struct passwd *pw = getpwuid(arr[i].st.st_uid);
-        const char *owner = pw ? pw->pw_name : (snprintf(ownerbuf, sizeof ownerbuf, "%u", arr[i].st.st_uid), ownerbuf);
+        const char *owner = pw ? pw->pw_name :
+            (snprintf(ownerbuf, sizeof ownerbuf, "%u", arr[i].st.st_uid), ownerbuf);
 
         struct group *gr = getgrgid(arr[i].st.st_gid);
-        const char *group = gr ? gr->gr_name : (snprintf(groupbuf, sizeof groupbuf, "%u", arr[i].st.st_gid), groupbuf);
+        const char *group = gr ? gr->gr_name :
+            (snprintf(groupbuf, sizeof groupbuf, "%u", arr[i].st.st_gid), groupbuf);
 
         format_time(arr[i].st.st_mtime, timestr, sizeof timestr);
-
-        printf("%s %*lu %-*s %-*s %*lld %s %s\n",
+        printf("%s %3lu %-8s %-8s %8lld %s %s\n",
                perm,
-               max_links, (unsigned long)arr[i].st.st_nlink,
-               max_owner, owner,
-               max_group, group,
-               max_size, (long long)arr[i].st.st_size,
+               (unsigned long)arr[i].st.st_nlink,
+               owner, group,
+               (long long)arr[i].st.st_size,
                timestr,
                arr[i].name);
-    }
-
-    for (size_t i = 0; i < n; ++i)
         free(arr[i].name);
+    }
     free(arr);
 }
 
-// ------------------- COLUMN DISPLAY MODE (DOWN THEN ACROSS) --------------------
-static void simple_list(const char *path) {
+// ------------------- SIMPLE LISTING HELPERS --------------------
+static void list_names(const char *path, int horizontal) {
     DIR *d = opendir(path);
-    if (!d) {
-        perror("opendir");
-        return;
-    }
+    if (!d) { perror("opendir"); return; }
 
     struct dirent *de;
     char **names = NULL;
-    int count = 0, capacity = 0;
+    int count = 0, cap = 0;
     size_t maxlen = 0;
 
-    // Step 1: Read all filenames and find longest name
     while ((de = readdir(d)) != NULL) {
-        if (de->d_name[0] == '.') continue;
-        if (count == capacity) {
-            capacity = capacity ? capacity * 2 : 64;
-            names = realloc(names, capacity * sizeof(char *));
+        if (!show_all_flag && de->d_name[0] == '.') continue;
+        if (count == cap) {
+            cap = cap ? cap * 2 : 64;
+            names = realloc(names, cap * sizeof(char *));
         }
         names[count] = strdup(de->d_name);
         size_t len = strlen(de->d_name);
@@ -163,9 +136,10 @@ static void simple_list(const char *path) {
         count++;
     }
     closedir(d);
-    if (count == 0) return;
+    if (count == 0) { free(names); return; }
 
-    // Step 2: Get terminal width
+    qsort(names, count, sizeof(char *), (int (*)(const void *, const void *)) strcmp);
+
     struct winsize ws;
     int term_width = 80;
     if (ioctl(STDOUT_FILENO, TIOCGWINSZ, &ws) == 0)
@@ -177,35 +151,68 @@ static void simple_list(const char *path) {
     if (cols < 1) cols = 1;
     int rows = (count + cols - 1) / cols;
 
-    // Step 3: Print down then across
-    for (int r = 0; r < rows; r++) {
-        for (int c = 0; c < cols; c++) {
-            int idx = c * rows + r;
-            if (idx < count)
-                printf("%-*s", col_width, names[idx]);
+    if (horizontal) {
+        for (int r = 0; r < rows; r++) {
+            for (int c = 0; c < cols; c++) {
+                int idx = r * cols + c;
+                if (idx < count) printf("%-*s", col_width, names[idx]);
+            }
+            printf("\n");
         }
-        printf("\n");
+    } else {
+        for (int r = 0; r < rows; r++) {
+            for (int c = 0; c < cols; c++) {
+                int idx = c * rows + r;
+                if (idx < count) printf("%-*s", col_width, names[idx]);
+            }
+            printf("\n");
+        }
     }
 
-    for (int i = 0; i < count; i++)
-        free(names[i]);
+    for (int i = 0; i < count; i++) free(names[i]);
     free(names);
+}
+
+// ------------------- RECURSIVE LISTING --------------------
+static void list_recursive(const char *path, int long_flag, int horiz_flag) {
+    printf("\n%s:\n", path);
+    if (long_flag) long_listing(path);
+    else list_names(path, horiz_flag);
+
+    DIR *d = opendir(path);
+    if (!d) return;
+    struct dirent *de;
+    char subpath[PATH_MAX];
+
+    while ((de = readdir(d)) != NULL) {
+        if (!show_all_flag && de->d_name[0] == '.') continue;
+        if (de->d_type == DT_DIR &&
+            strcmp(de->d_name, ".") != 0 &&
+            strcmp(de->d_name, "..") != 0) {
+            snprintf(subpath, sizeof(subpath), "%s/%s", path, de->d_name);
+            list_recursive(subpath, long_flag, horiz_flag);
+        }
+    }
+    closedir(d);
 }
 
 // ------------------- MAIN --------------------
 int main(int argc, char **argv) {
     int opt;
-    int long_listing_flag = 0;
+    int long_flag = 0, horiz_flag = 0, recursive_flag = 0;
 
-    while ((opt = getopt(argc, argv, "l")) != -1) {
-        if (opt == 'l') long_listing_flag = 1;
+    while ((opt = getopt(argc, argv, "lxaR")) != -1) {
+        if (opt == 'l') long_flag = 1;
+        else if (opt == 'x') horiz_flag = 1;
+        else if (opt == 'a') show_all_flag = 1;
+        else if (opt == 'R') recursive_flag = 1;
     }
 
-    const char *path = ".";
-    if (optind < argc) path = argv[optind];
+    const char *path = (optind < argc) ? argv[optind] : ".";
 
-    if (long_listing_flag) long_listing(path);
-    else simple_list(path);
+    if (recursive_flag) list_recursive(path, long_flag, horiz_flag);
+    else if (long_flag) long_listing(path);
+    else list_names(path, horiz_flag);
 
     return 0;
 }
